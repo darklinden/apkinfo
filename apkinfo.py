@@ -40,6 +40,7 @@ def main():
     exe_path = os.path.dirname(os.path.realpath(__file__))
     apksigner_path = os.path.join(exe_path, "apksigner_34_0_0.jar")
     apktool_path = os.path.join(exe_path, "apktool_2_8_1.jar")
+    vasdolly_path = os.path.join(exe_path, "VasDolly_3_0_4.jar")
 
     apk_path = sys.argv[1]
 
@@ -125,6 +126,12 @@ def main():
         print("=====================")
         print(sha256)
         print("=====================")
+
+    channel = run_cmd(["java", "-jar", vasdolly_path, "get", "-c", apk_path])
+    print("Channel:")
+    print("=====================")
+    print(channel.decode(ENCODING))
+    print("=====================")
 
     if os.path.exists(unpacked):
         shutil.rmtree(unpacked, ignore_errors=True)

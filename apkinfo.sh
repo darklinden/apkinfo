@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 
-BASEDIR=$(dirname "$0")
-SCRIPT_DIR="$(realpath "${BASEDIR}")"
+SOURCE=${BASH_SOURCE[0]}
+while [ -L "$SOURCE" ]; do # resolve $SOURCE until the file is no longer a symlink
+    DIR=$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)
+    SOURCE=$(readlink "$SOURCE")
+    [[ $SOURCE != /* ]] && SOURCE=$DIR/$SOURCE # if $SOURCE was a relative symlink, we need to resolve it relative to the path where the symlink file was located
+done
+SCRIPT_DIR=$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)
 
 echo "Script directory: $SCRIPT_DIR"
 
@@ -54,6 +59,6 @@ else
 fi
 
 source $ACTIVATE
-pip install -r requirements.txt
+pip install -r $SCRIPT_DIR/requirements.txt
 
 python $SCRIPT_DIR"/apkinfo.py" $@
