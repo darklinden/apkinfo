@@ -1,0 +1,6 @@
+{
+"key_path": "key.keystore",
+"alias_name": "ali",
+"store_pwd": "password",
+"key_pwd": "password"
+}

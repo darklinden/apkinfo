@@ -63,4 +63,4 @@ fi
 source $ACTIVATE
 pip install -r $SCRIPT_DIR/requirements.txt
 
-python $SCRIPT_DIR"/apkinfo.py" $@
+python $SCRIPT_DIR"/apkex.py" $@
