@@ -18,14 +18,14 @@ if ($null -eq $GLOBAL_PYTHON) {
         Write-Host "Python is not installed"
         exit 1
     } else {
-        $PYTHON_VERSION = & $GLOBAL_PYTHON --version
+        $PYTHON_VERSION = Invoke-Expression "& $GLOBAL_PYTHON --version"
         if (-not $PYTHON_VERSION.Contains("3.")) {
             Write-Host "Python 3 is not installed"
             exit 1
         }
     }
 } else {
-    $PYTHON_VERSION = & $GLOBAL_PYTHON --version
+    $PYTHON_VERSION = Invoke-Expression "& $GLOBAL_PYTHON --version"
     if (-not $PYTHON_VERSION.Contains("3.")) {
         Write-Host "Python 3 is not installed"
         exit 1
@@ -38,12 +38,13 @@ $VENV_DIR = "$SCRIPT_DIR\venv"
 $ACTIVATE = "$VENV_DIR\Scripts\Activate.ps1"
 
 if (-not (Test-Path $VENV_DIR)) {
-    # Take action if $DIR does not exist. #
+    Write-Host "Creating virtual environment folder $VENV_DIR"
     New-Item -ItemType Directory -Path $VENV_DIR | Out-Null
     & $GLOBAL_PYTHON -m venv $VENV_DIR
+    Write-Host "Virtual environment folder created"
 }
 else {
-    Write-Host "Virtual environment folder already exists"
+    Write-Host "Virtual environment folder already exists $VENV_DIR"
 }
 
 . $ACTIVATE
