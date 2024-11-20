@@ -13,13 +13,25 @@ cd $CWD
 echo "Script directory: $SCRIPT_DIR"
 
 GLOBAL_PYTHON=$(which python3)
+# echo "Global python3: $GLOBAL_PYTHON"
+# empty or "not found" string
+
+# detect string contains "not found"
+if [[ $GLOBAL_PYTHON == *"not found"* ]]; then
+    GLOBAL_PYTHON=""
+fi
+
 if [ -z "$GLOBAL_PYTHON" ]; then
     GLOBAL_PYTHON=$(which python)
+    # echo "Global python: $GLOBAL_PYTHON"
+    if [[ $GLOBAL_PYTHON == *"not found"* ]]; then
+        GLOBAL_PYTHON=""
+    fi
     if [ -z "$GLOBAL_PYTHON" ]; then
         echo "Python is not installed"
         exit 1
     else
-        PYTHON_VERSION=$($GLOBAL_PYTHON --version)
+        PYTHON_VERSION=$("$GLOBAL_PYTHON" --version)
         if ! [[ $PYTHON_VERSION == *"3."* ]]; then
             echo "Python 3 is not installed"
             exit 1
@@ -35,13 +47,13 @@ fi
 
 echo "Using global python: $GLOBAL_PYTHON $PYTHON_VERSION"
 
-VENV_DIR=$SCRIPT_DIR"/venv"
-ACTIVATE=$VENV_DIR"/bin/activate"
+VENV_DIR=$(cygpath -wa "$SCRIPT_DIR/venv")
+ACTIVATE=$VENV_DIR"/Scripts/activate"
 
 if [ ! -d $VENV_DIR ]; then
     # Take action if $DIR exists. #
     mkdir $VENV_DIR
-    $GLOBAL_PYTHON -m venv $VENV_DIR
+    "$GLOBAL_PYTHON" -m venv $VENV_DIR
 else
     echo "Virtual environment folder already exists"
 fi
@@ -57,10 +69,12 @@ else
 
     # Take action if $DIR exists. #
     mkdir $VENV_DIR
-    $GLOBAL_PYTHON -m venv $VENV_DIR
+    "$GLOBAL_PYTHON" -m venv $VENV_DIR
 fi
 
-source $ACTIVATE
-pip install -r $SCRIPT_DIR/requirements.txt
+. $ACTIVATE
+pip install -r $(cygpath -wa "$SCRIPT_DIR/requirements.txt")
 
-python $SCRIPT_DIR"/adblog.py" $@
+ANDROID_HOME=$(cygpath -wa "$ANDROID_HOME")
+
+python $(cygpath -wa "$SCRIPT_DIR/adblog.py") $@

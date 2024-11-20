@@ -23,10 +23,6 @@ def init_tools():
     android_sdk_path = os.environ.get("ANDROID_HOME") or os.environ.get(
         "ANDROID_SDK_ROOT"
     )
-    if android_sdk_path is None or (not os.path.isdir(android_sdk_path)):
-        android_sdk_path = "/Users/Shared/Android/sdk"
-    if not os.path.isdir(android_sdk_path):
-        android_sdk_path = os.path.expanduser("~/Library/Android/sdk")
     if not os.path.isdir(android_sdk_path):
         print("ANDROID_HOME or ANDROID_SDK_ROOT not found")
         exit(1)
@@ -83,29 +79,6 @@ def run_cmd(cmd):
     if err:
         print(err)
     return out.decode("utf-8")
-
-
-def self_install(file, des):
-    file_path = os.path.realpath(file)
-
-    filename = file_path
-
-    pos = filename.rfind("/")
-    if pos:
-        filename = filename[pos + 1 :]
-
-    pos = filename.find(".")
-    if pos:
-        filename = filename[:pos]
-
-    to_path = os.path.join(des, filename)
-
-    print("installing [" + file_path + "] \n\tto [" + to_path + "]")
-    if os.path.isfile(to_path):
-        os.remove(to_path)
-
-    shutil.copy(file_path, to_path)
-    run_cmd(["chmod", "a+x", to_path])
 
 
 def get_value_by_key(src, prefix, key):
