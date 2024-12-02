@@ -1,6 +1,7 @@
 #!/usr/bin/env rust-script
 //! * <https://github.com/fornwall/rust-script>
 //! * cargo install rust-script
+//! 
 //! Dependencies can be specified in the script file itself as follows:
 //!
 //! ```cargo

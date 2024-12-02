@@ -1,6 +1,7 @@
 #!/usr/bin/env rust-script
 //! * <https://github.com/fornwall/rust-script>
 //! * cargo install rust-script
+//! 
 //! Dependencies can be specified in the script file itself as follows:
 //!
 //! ```cargo
@@ -67,10 +68,13 @@ pub fn init_log(project_path: &Path) -> (WorkerGuard, WorkerGuard) {
 
     tracing::subscriber::set_global_default(
         fmt::Subscriber::builder()
-            .with_timer(timer.clone())
             .with_writer(non_blocking_stdout)
             .finish()
-            .with(fmt::Layer::default().with_writer(non_blocking_file)),
+            .with(
+                fmt::Layer::default()
+                    .with_timer(timer.clone())
+                    .with_writer(non_blocking_file),
+            ),
     )
     .expect("Unable to set global tracing subscriber");
 

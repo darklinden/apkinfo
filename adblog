@@ -1,6 +1,7 @@
 #!/usr/bin/env rust-script
 //! * <https://github.com/fornwall/rust-script>
 //! * cargo install rust-script
+//! 
 //! Dependencies can be specified in the script file itself as follows:
 //!
 //! ```cargo
@@ -180,7 +181,7 @@ pub(crate) fn extract_single_file(src_zip: &Path, sub_file: &str, des_file: &Pat
         use std::os::unix::fs::PermissionsExt;
 
         if let Some(mode) = file.unix_mode() {
-            fs::set_permissions(&out_path, fs::Permissions::from_mode(mode))?;
+            fs::set_permissions(&des_file, fs::Permissions::from_mode(mode))?;
         }
     }
 
@@ -279,7 +280,7 @@ async fn run_adb_log() -> Result<()> {
     }
 
     let folder = file_path.parent().context("working folder not found")?;
-    let _guards = init_log(&folder);
+    let _guards = init_log(folder);
 
     let script_folder = match std::env::var("RUST_SCRIPT_BASE_PATH") {
         Ok(script_folder) => {
@@ -568,35 +569,35 @@ async fn run_adb_log() -> Result<()> {
     }
 
     let install_result = if exec_path.ends_with(".apks") {
-        let install = run_cmd(
+        
+        run_cmd(
             "install apks",
             "java",
             [
                 "-jar",
                 "bundletool-all-1.16.0.jar",
                 "install-apks",
-                &format!("--adb=adb"),
+                "--adb=adb",
                 &format!("--device-id={}", selected_device),
                 &format!("--apks={}", exec_path.to_str().unwrap()),
             ],
             false,
         )
-        .await?;
-        install
+        .await?
     } else {
-        let install = run_cmd(
+        
+        run_cmd(
             "install apk",
             adb_path.to_str().unwrap(),
             [
                 "-s",
                 &selected_device,
                 "install",
-                &exec_path.to_str().unwrap(),
+                exec_path.to_str().unwrap(),
             ],
             false,
         )
-        .await?;
-        install
+        .await?
     };
 
     if !install_result.0.success() {
@@ -670,7 +671,7 @@ async fn run_adb_log() -> Result<()> {
 
                 let mut buf = vec![];
                 let process_pid_str = format!(" {} ", pid);
-                while let Ok(_) = reader.read_until(b'\n', &mut buf).await {
+                while (reader.read_until(b'\n', &mut buf).await).is_ok() {
                     if buf.is_empty() {
                         break;
                     }

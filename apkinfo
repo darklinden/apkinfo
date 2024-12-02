@@ -1,6 +1,7 @@
 #!/usr/bin/env rust-script
 //! * <https://github.com/fornwall/rust-script>
 //! * cargo install rust-script
+//! 
 //! Dependencies can be specified in the script file itself as follows:
 //!
 //! ```cargo
@@ -31,7 +32,7 @@ pub(crate) fn cyg_to_win(path: &str) -> String {
     path.to_string()
 }
 
-async fn run_cmd<S, I>(work: &str, program: S, args: I) -> Result<std::process::Output>
+async fn run_cmd<S, I>(work: &str, program: S, args: I) -> Result<std::process::ExitStatus>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
@@ -66,7 +67,7 @@ where
             .await
             .expect("child process encountered an error");
 
-        tx.send(output).await.unwrap();
+        tx.send(output.status).await.unwrap();
     });
 
     while let Some(line) = reader.next_line().await? {
@@ -208,7 +209,7 @@ async fn run_apk_info() -> Result<()> {
     )
     .await?;
 
-    if !info_out.status.success() {
+    if !info_out.success() {
         anyhow::bail!("extract apk failed");
     }
 
@@ -225,7 +226,7 @@ async fn run_apk_info() -> Result<()> {
         ],
     )
     .await?;
-    if !apk_results.status.success() {
+    if !apk_results.success() {
         anyhow::bail!("verify apk failed");
     }
 
@@ -241,7 +242,7 @@ async fn run_apk_info() -> Result<()> {
         ],
     )
     .await?;
-    if !channel.status.success() {
+    if !channel.success() {
         anyhow::bail!("get channel failed");
     }
 
