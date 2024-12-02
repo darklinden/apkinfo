@@ -1,0 +1,364 @@
+#!/usr/bin/env rust-script
+//! * <https://github.com/fornwall/rust-script>
+//! * cargo install rust-script
+//! Dependencies can be specified in the script file itself as follows:
+//!
+//! ```cargo
+//! [dependencies]
+//! clap = { version = "4.5.21", features = ["derive"] }
+//! serde_json = "1.0.133"
+//! tracing = "0.1.41"
+//! tracing-subscriber = { version = "0.3.18", features = [
+//!     "env-filter",
+//!     "registry",
+//!     "time",
+//! ] }
+//! tracing-appender = "0.2.3"
+//! time = { version = "0.3.36", features = ["local-offset"] }
+//! anyhow = "1.0.93"
+//! tokio = { version = "1.41.1", features = ["full"] }
+//! serde = { version = "1.0.215", features = ["derive"] }
+//! ```
+
+use anyhow::Context;
+use anyhow::Result;
+use clap::Parser;
+use serde::Deserialize;
+use serde::Serialize;
+use std::ffi::OsStr;
+use std::fs;
+use std::process::Stdio;
+use std::{io::stdout, path::Path};
+use time::{format_description, UtcOffset};
+use tokio::io::AsyncBufReadExt;
+use tokio::io::BufReader;
+use tokio::process::Command;
+use tokio::sync::mpsc;
+use tracing_appender::non_blocking::WorkerGuard;
+use tracing_subscriber::{
+    fmt::{self, time::OffsetTime},
+    layer::SubscriberExt,
+};
+
+pub fn init_log(project_path: &Path) -> (WorkerGuard, WorkerGuard) {
+    std::env::set_var("RUST_BACKTRACE", "1");
+    let time_zone_offset = UtcOffset::from_hms(8, 0, 0).expect("should get UTC+8 offset!");
+
+    let format = format_description::parse("[year][month][day]_[hour][minute][second]").unwrap();
+    let now = time::OffsetDateTime::now_local()
+        .unwrap_or(time::OffsetDateTime::now_utc().to_offset(time_zone_offset))
+        .format(&format)
+        .unwrap();
+    let log_file_name = format!("apkex_{}.log", now);
+    let exec_folder = project_path.to_str().unwrap();
+    println!(
+        "log file path: {}/{}",
+        exec_folder.replace("\\", "/"),
+        log_file_name
+    );
+    let log_file = tracing_appender::rolling::never(exec_folder, log_file_name);
+    let (non_blocking_file, _file_guard) = tracing_appender::non_blocking(log_file);
+    let (non_blocking_stdout, _stdout_guard) = tracing_appender::non_blocking(stdout());
+
+    let timer = OffsetTime::new(
+        time_zone_offset,
+        time::format_description::well_known::Rfc3339,
+    );
+
+    tracing::subscriber::set_global_default(
+        fmt::Subscriber::builder()
+            .with_timer(timer.clone())
+            .with_writer(non_blocking_stdout)
+            .finish()
+            .with(fmt::Layer::default().with_writer(non_blocking_file)),
+    )
+    .expect("Unable to set global tracing subscriber");
+
+    (_stdout_guard, _file_guard)
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn cyg_to_win(path: &str) -> String {
+    path.replace("/cygdrive/c", "C:")
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn cyg_to_win(path: &str) -> String {
+    path.to_string()
+}
+
+async fn run_cmd<S, I>(work: &str, program: S, args: I) -> Result<std::process::ExitStatus>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let mut cmd = Command::new(program);
+
+    cmd.args(args);
+
+    // Specify that we want the command's standard output piped back to us.
+    // By default, standard input/output/error will be inherited from the
+    // current process (for example, this means that standard input will
+    // come from the keyboard and standard output/error will go directly to
+    // the terminal if this process is invoked from the command line).
+    cmd.stdout(Stdio::piped());
+
+    let mut child = cmd.spawn().expect("failed to spawn command");
+
+    let stdout = child
+        .stdout
+        .take()
+        .expect("child did not have a handle to stdout");
+
+    let mut reader = BufReader::new(stdout).lines();
+
+    let (tx, mut rx) = mpsc::channel(2);
+
+    // Ensure the child process is spawned in the runtime so it can
+    // make progress on its own while we await for any output.
+    tokio::spawn(async move {
+        let output = child
+            .wait_with_output()
+            .await
+            .expect("child process encountered an error");
+
+        tx.send(output.status).await.unwrap();
+    });
+
+    while let Some(line) = reader.next_line().await? {
+        tracing::info!("[{}] {}", work, line);
+    }
+
+    let output_result = rx.recv().await;
+
+    Ok(output_result.unwrap())
+}
+
+async fn unpack(apktool_path: &str, src_name: &Path) -> Result<String> {
+    let des = src_name.with_extension("");
+    if des.is_file() {
+        fs::remove_file(&des).unwrap();
+    }
+    if des.is_dir() {
+        fs::remove_dir_all(&des).unwrap();
+    }
+
+    let output = run_cmd(
+        "unpack",
+        "java",
+        [
+            "-jar",
+            "-Xms512m",
+            "-Xmx1024m",
+            apktool_path,
+            "--only-main-classes",
+            "d",
+            "-f",
+            src_name.to_str().unwrap(),
+            "-o",
+            des.to_str().unwrap(),
+        ],
+    )
+    .await?;
+
+    if !output.success() {
+        anyhow::bail!("Failed to unpack apk");
+    }
+
+    Ok(des.to_str().unwrap().to_string())
+}
+
+async fn pack(apktool_path: &str, src_path: &Path) -> Result<String> {
+    let des_path = src_path.with_extension("").with_extension("repacked.apk");
+    if des_path.is_file() {
+        fs::remove_file(&des_path).unwrap();
+    }
+
+    let output = run_cmd(
+        "pack",
+        "java",
+        [
+            "-jar",
+            "-Xms512m",
+            "-Xmx1024m",
+            apktool_path,
+            "--only-main-classes",
+            "b",
+            "-f",
+            src_path.to_str().unwrap(),
+            "-o",
+            des_path.to_str().unwrap(),
+        ],
+    )
+    .await?;
+
+    if !output.success() {
+        anyhow::bail!("Failed to pack apk");
+    }
+
+    Ok(des_path.to_str().unwrap().to_string())
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+struct KeyConfig {
+    pub key_path: String,
+    pub alias_name: String,
+    pub store_pwd: String,
+    pub key_pwd: String,
+}
+
+fn read_config(conf_file_path: &Path) -> Result<KeyConfig> {
+    println!("read config: {}", conf_file_path.display());
+    Ok(if conf_file_path.is_file() {
+        let file_content = fs::read_to_string(conf_file_path)?;
+        serde_json::from_str(&file_content)?
+    } else {
+        KeyConfig::default()
+    })
+}
+
+async fn sign(apksigner_path: &str, apk_path: &str, conf: &KeyConfig) -> Result<()> {
+    let output = run_cmd(
+        "sign",
+        "java",
+        [
+            "-jar",
+            apksigner_path,
+            "--allowResign",
+            "--overwrite",
+            "-ks",
+            &conf.key_path,
+            "--ksPass",
+            &conf.store_pwd,
+            "--ksAlias",
+            &conf.alias_name,
+            "--ksKeyPass",
+            &conf.key_pwd,
+            "-a",
+            apk_path,
+        ],
+    )
+    .await?;
+
+    if !output.success() {
+        anyhow::bail!("Failed to sign apk");
+    }
+
+    Ok(())
+}
+
+/// Apkex: Apk tool command line tool
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// Command [u: unpack; p: pack;]
+    #[arg(short, long)]
+    cmd: String,
+
+    /// File Or Folder Path
+    #[arg(short, long)]
+    file_or_folder_path: String,
+
+    /// Keystore config file path
+    #[arg(short, long, default_value = "")]
+    key_config: String,
+}
+
+async fn run_apktool_ex() -> Result<()> {
+    let args: Args = Args::parse();
+    let cmd = args.cmd.trim();
+
+    let file_or_folder_path = cyg_to_win(&args.file_or_folder_path);
+    let file_or_folder_path = std::path::absolute(Path::new(&file_or_folder_path))?;
+    if !file_or_folder_path.exists() {
+        anyhow::bail!(
+            "file_or_folder_path not exists: {}",
+            file_or_folder_path.display()
+        );
+    }
+
+    let file_or_folder_parent = file_or_folder_path.parent().unwrap();
+    let _guards = init_log(file_or_folder_parent);
+
+    let script_folder = match std::env::var("RUST_SCRIPT_BASE_PATH") {
+        Ok(script_folder) => {
+            tracing::info!("RUST_SCRIPT_BASE_PATH exists {}", script_folder);
+            script_folder
+        }
+        Err(_) => {
+            tracing::info!("RUST_SCRIPT_BASE_PATH not exists, use CARGO_MANIFEST_DIR");
+            std::env::var("CARGO_MANIFEST_DIR")?
+        }
+    };
+
+    let script_folder_path = Path::new(&script_folder);
+    if !script_folder_path.exists() {
+        anyhow::bail!("script_folder not exists: {}", script_folder_path.display());
+    }
+
+    tracing::info!("script_folder: {}", script_folder);
+
+    let apktool_path = script_folder_path.join("apktool_2_8_1.jar");
+    if !apktool_path.exists() {
+        anyhow::bail!("apktool_path not exists: {}", apktool_path.display());
+    }
+    let apktool_path = apktool_path.to_str().unwrap();
+    tracing::info!("apktool_path: {}", apktool_path);
+
+    let apksigner_path = script_folder_path.join("uber-apk-signer-1.3.0.jar");
+    if !apksigner_path.exists() {
+        anyhow::bail!("apksigner_path not exists: {}", apksigner_path.display());
+    }
+    let apksigner_path = apksigner_path.to_str().unwrap();
+    tracing::info!("apksigner_path: {}", apksigner_path);
+
+    match cmd {
+        "u" => {
+            unpack(apktool_path, &file_or_folder_path).await?;
+        }
+        "p" => {
+            let key_config_path = if args.key_config.is_empty() {
+                tracing::info!("key_config is empty, use default");
+                script_folder_path.join("default_key_config.json")
+            } else {
+                let key_config_path = cyg_to_win(&args.key_config);
+                std::path::absolute(Path::new(&key_config_path))?
+            };
+            tracing::info!("key_config_path: {}", key_config_path.display());
+            let key_config_folder = key_config_path.parent().context(format!(
+                "key_config_path parent not exists: {}",
+                key_config_path.display()
+            ))?;
+
+            let mut conf = read_config(&key_config_path)?;
+            let key_path = key_config_folder.join(&conf.key_path);
+            if !key_path.is_file() {
+                anyhow::bail!("key_path not exists: {}", key_path.display());
+            }
+            conf.key_path = key_path.to_str().unwrap().to_string();
+
+            let packed = pack(apktool_path, &file_or_folder_path).await?;
+            tracing::info!("\n\npacked to: {}", packed);
+            sign(apksigner_path, &packed, &conf).await?;
+            tracing::info!("\n\nsigned to: {}", packed);
+        }
+        _ => {
+            anyhow::bail!("unknown cmd: {}", cmd);
+        }
+    }
+
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() {
+    match run_apktool_ex().await {
+        Ok(_) => {
+            println!("Done");
+        }
+        Err(e) => {
+            tracing::error!("Failed: {:?}", e);
+            println!("Failed: {:?}", e);
+        }
+    }
+}
