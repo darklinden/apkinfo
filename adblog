@@ -1,7 +1,7 @@
 #!/usr/bin/env rust-script
 //! * <https://github.com/fornwall/rust-script>
 //! * cargo install rust-script
-//! 
+//!
 //! Dependencies can be specified in the script file itself as follows:
 //!
 //! ```cargo
@@ -150,6 +150,7 @@ where
         anyhow::bail!("run_cmd: output_result is none");
     }
 
+    tracing::info!("{} finished code {}", work, output_result.as_ref().unwrap());
     Ok((output_result.unwrap(), stdout))
 }
 
@@ -181,7 +182,7 @@ pub(crate) fn extract_single_file(src_zip: &Path, sub_file: &str, des_file: &Pat
         use std::os::unix::fs::PermissionsExt;
 
         if let Some(mode) = file.unix_mode() {
-            fs::set_permissions(&des_file, fs::Permissions::from_mode(mode))?;
+            fs::set_permissions(des_file, fs::Permissions::from_mode(mode))?;
         }
     }
 
@@ -392,16 +393,16 @@ async fn run_adb_log() -> Result<()> {
         anyhow::bail!("aapt2 not found");
     }
 
-    let refresh_devices = run_cmd(
-        "refresh devices",
-        adb_path.to_str().unwrap(),
-        ["kill-server"],
-        false,
-    )
-    .await?;
-    if !refresh_devices.0.success() {
-        anyhow::bail!("adb kill-server failed");
-    }
+    // let refresh_devices = run_cmd(
+    //     "refresh devices",
+    //     adb_path.to_str().unwrap(),
+    //     ["kill-server"],
+    //     false,
+    // )
+    // .await?;
+    // if !refresh_devices.0.success() {
+    //     anyhow::bail!("adb kill-server failed");
+    // }
 
     let devices_str = run_cmd(
         "list devices",
@@ -568,8 +569,8 @@ async fn run_adb_log() -> Result<()> {
         }
     }
 
+    tracing::info!("installing ...");
     let install_result = if exec_path.ends_with(".apks") {
-        
         run_cmd(
             "install apks",
             "java",
@@ -585,7 +586,6 @@ async fn run_adb_log() -> Result<()> {
         )
         .await?
     } else {
-        
         run_cmd(
             "install apk",
             adb_path.to_str().unwrap(),
@@ -605,7 +605,6 @@ async fn run_adb_log() -> Result<()> {
     }
 
     tracing::info!("starting process ...");
-
     let start = run_cmd(
         "start process",
         adb_path.to_str().unwrap(),
@@ -686,6 +685,7 @@ async fn run_adb_log() -> Result<()> {
             }
 
             "mem" => loop {
+                tracing::info!("dumpsys meminfo ...");
                 let dumpsys_meminfo = run_cmd(
                     "dumpsys meminfo",
                     adb_path.to_str().unwrap(),
@@ -708,6 +708,7 @@ async fn run_adb_log() -> Result<()> {
             },
 
             "cpu" => loop {
+                tracing::info!("dumpsys cpuinfo ...");
                 let dumpsys_cpuinfo = run_cmd(
                     "dumpsys cpuinfo",
                     adb_path.to_str().unwrap(),
