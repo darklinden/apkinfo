@@ -1,83 +1,7 @@
-#!/usr/bin/env rust-script
-//! * <https://github.com/fornwall/rust-script>
-//! * cargo install rust-script
-//! 
-//! Dependencies can be specified in the script file itself as follows:
-//!
-//! ```cargo
-//! [dependencies]
-//! clap = { version = "4.5.21", features = ["derive"] }
-//! anyhow = "1.0.93"
-//! tokio = { version = "1.41.1", features = ["full"] }
-//! serde = { version = "1.0.215", features = ["derive"] }
-//! ```
-
 use anyhow::Result;
 use clap::Parser;
-use std::ffi::OsStr;
 use std::fs;
-use std::process::Stdio;
-use tokio::io::AsyncBufReadExt;
-use tokio::io::BufReader;
-use tokio::process::Command;
-use tokio::sync::mpsc;
-
-#[cfg(target_os = "windows")]
-pub(crate) fn cyg_to_win(path: &str) -> String {
-    path.replace("/cygdrive/c", "C:")
-}
-
-#[cfg(not(target_os = "windows"))]
-pub(crate) fn cyg_to_win(path: &str) -> String {
-    path.to_string()
-}
-
-async fn run_cmd<S, I>(work: &str, program: S, args: I) -> Result<std::process::ExitStatus>
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<OsStr>,
-{
-    let mut cmd = Command::new(program);
-
-    cmd.args(args);
-
-    // Specify that we want the command's standard output piped back to us.
-    // By default, standard input/output/error will be inherited from the
-    // current process (for example, this means that standard input will
-    // come from the keyboard and standard output/error will go directly to
-    // the terminal if this process is invoked from the command line).
-    cmd.stdout(Stdio::piped());
-
-    let mut child = cmd.spawn().expect("failed to spawn command");
-
-    let stdout = child
-        .stdout
-        .take()
-        .expect("child did not have a handle to stdout");
-
-    let mut reader = BufReader::new(stdout).lines();
-
-    let (tx, mut rx) = mpsc::channel(2);
-
-    // Ensure the child process is spawned in the runtime so it can
-    // make progress on its own while we await for any output.
-    tokio::spawn(async move {
-        let output = child
-            .wait_with_output()
-            .await
-            .expect("child process encountered an error");
-
-        tx.send(output.status).await.unwrap();
-    });
-
-    while let Some(line) = reader.next_line().await? {
-        println!("[{}] {}", work, line);
-    }
-
-    let output_result = rx.recv().await;
-
-    Ok(output_result.unwrap())
-}
+use utils_lib::{assets_path, init_log, resolve_cygpath, run_cmd};
 
 /// ApkInfo: A tool to extract information from APK files
 #[derive(Parser, Debug)]
@@ -89,42 +13,37 @@ struct Args {
 }
 
 async fn run_apk_info() -> Result<()> {
+    let _guards = init_log("apkinfo", std::path::Path::new("."));
+
     let args = Args::parse();
-    let apk_path = cyg_to_win(&args.apk_path);
+
+    let apk_path = resolve_cygpath(&args.apk_path).await?;
+    tracing::info!("apk_path: {}", apk_path);
     let apk_path = std::path::absolute(&apk_path)?;
     if !apk_path.is_file() {
-        println!("apk file not found");
+        tracing::info!("apk file not found");
         return Ok(());
     }
 
-    let script_folder = match std::env::var("RUST_SCRIPT_BASE_PATH") {
-        Ok(script_folder) => {
-            println!("RUST_SCRIPT_BASE_PATH exists {}", script_folder);
-            script_folder
-        }
-        Err(_) => {
-            println!("RUST_SCRIPT_BASE_PATH not exists, use CARGO_MANIFEST_DIR");
-            std::env::var("CARGO_MANIFEST_DIR")?
-        }
-    };
-    println!("script_folder: {}", script_folder);
-    let script_folder = std::path::absolute(&script_folder)?;
-    if !script_folder.is_dir() {
-        anyhow::bail!("script_folder not found");
+    let assets_path = assets_path().await;
+    tracing::info!("assets_path: {}", assets_path);
+    let assets_path = std::path::absolute(assets_path)?;
+    if !assets_path.is_dir() {
+        anyhow::bail!("assets_path not found");
     }
 
     let android_home = match std::env::var("ANDROID_HOME") {
         Ok(android_home) => {
-            println!("ANDROID_HOME exists {}", android_home);
+            tracing::info!("ANDROID_HOME exists {}", android_home);
             android_home
         }
         Err(_) => {
-            println!("ANDROID_HOME not exists, use ANDROID_SDK_ROOT");
+            tracing::info!("ANDROID_HOME not exists, use ANDROID_SDK_ROOT");
             std::env::var("ANDROID_SDK_ROOT")?
         }
     };
-    println!("android_home: {}", android_home);
-    let android_home = cyg_to_win(&android_home);
+    tracing::info!("android_home: {}", android_home);
+    let android_home = resolve_cygpath(&android_home).await?;
     let android_home = std::path::absolute(&android_home)?;
     if !android_home.is_dir() {
         anyhow::bail!("android_home not found");
@@ -141,13 +60,13 @@ async fn run_apk_info() -> Result<()> {
                 }
             }
             Err(e) => {
-                println!("Error: {}", e);
+                tracing::info!("Error: {}", e);
                 None
             }
         })
         .collect::<Vec<_>>();
     let latest_build_tools = build_tools.iter().max().unwrap();
-    println!("latest_build_tools: {}", latest_build_tools.display());
+    tracing::info!("latest_build_tools: {}", latest_build_tools.display());
 
     let aapt2_path = fs::read_dir(latest_build_tools)?
         .filter_map(|entry| match entry {
@@ -164,13 +83,13 @@ async fn run_apk_info() -> Result<()> {
                 }
             }
             Err(e) => {
-                println!("Error: {}", e);
+                tracing::info!("Error: {}", e);
                 None
             }
         })
         .next()
         .unwrap();
-    println!("aapt2_path: {}", aapt2_path.display());
+    tracing::info!("aapt2_path: {}", aapt2_path.display());
 
     let apksigner_path = fs::read_dir(latest_build_tools.join("lib"))?
         .filter_map(|entry| match entry {
@@ -187,29 +106,30 @@ async fn run_apk_info() -> Result<()> {
                 }
             }
             Err(e) => {
-                println!("Error: {}", e);
+                tracing::info!("Error: {}", e);
                 None
             }
         })
         .next()
         .unwrap();
-    println!("apksigner_path: {}", apksigner_path.display());
+    tracing::info!("apksigner_path: {}", apksigner_path.display());
 
-    let vasdolly_path = script_folder.join("VasDolly_3_0_4.jar");
+    let vasdolly_path = assets_path.join("VasDolly_3_0_4.jar");
     if !vasdolly_path.is_file() {
-        println!("vasdolly not found");
+        tracing::info!("vasdolly not found");
         return Ok(());
     }
 
-    println!("aapt2 apk info ...");
+    tracing::info!("aapt2 apk info ...");
     let info_out = run_cmd(
         "aapt2",
         aapt2_path.to_str().unwrap(),
         ["dump", "badging", apk_path.to_str().unwrap()],
+        false,
     )
     .await?;
 
-    if !info_out.success() {
+    if !info_out.0.success() {
         anyhow::bail!("extract apk failed");
     }
 
@@ -224,9 +144,10 @@ async fn run_apk_info() -> Result<()> {
             "-v",
             apk_path.to_str().unwrap(),
         ],
+        false,
     )
     .await?;
-    if !apk_results.success() {
+    if !apk_results.0.success() {
         anyhow::bail!("verify apk failed");
     }
 
@@ -240,9 +161,10 @@ async fn run_apk_info() -> Result<()> {
             "-c",
             apk_path.to_str().unwrap(),
         ],
+        false,
     )
     .await?;
-    if !channel.success() {
+    if !channel.0.success() {
         anyhow::bail!("get channel failed");
     }
 
@@ -254,7 +176,7 @@ async fn main() {
     match run_apk_info().await {
         Ok(_) => {}
         Err(e) => {
-            println!("{}", e);
+            tracing::info!("{}", e);
         }
     }
 }

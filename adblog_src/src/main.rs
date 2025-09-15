@@ -1,193 +1,12 @@
-#!/usr/bin/env rust-script
-//! * <https://github.com/fornwall/rust-script>
-//! * cargo install rust-script
-//!
-//! Dependencies can be specified in the script file itself as follows:
-//!
-//! ```cargo
-//! [dependencies]
-//! clap = { version = "4.5.21", features = ["derive"] }
-//! serde_json = "1.0.133"
-//! tracing = "0.1.41"
-//! tracing-subscriber = { version = "0.3.18", features = [
-//!     "env-filter",
-//!     "registry",
-//!     "time",
-//! ] }
-//! tracing-appender = "0.2.3"
-//! time = { version = "0.3.36", features = ["local-offset"] }
-//! anyhow = "1.0.93"
-//! tokio = { version = "1.41.1", features = ["full"] }
-//! serde = { version = "1.0.215", features = ["derive"] }
-//! zip = "2.2.1"
-//! dialoguer = { version = "0.11.0", features = ["fuzzy-select"] }
-//! ```
-
-use anyhow::Context;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use dialoguer::{theme::ColorfulTheme, FuzzySelect};
-use std::ffi::OsStr;
-use std::fs;
-use std::process::Stdio;
-use std::{io::stdout, path::Path};
-use time::{format_description, UtcOffset};
-use tokio::io::AsyncBufReadExt;
-use tokio::io::BufReader;
-use tokio::process::Command;
-use tokio::sync::mpsc;
-use tracing_appender::non_blocking::WorkerGuard;
-use tracing_subscriber::{
-    fmt::{self, time::OffsetTime},
-    layer::SubscriberExt,
+use std::{fs, path::Path, process::Stdio};
+use tokio::{
+    io::{AsyncBufReadExt, BufReader},
+    process::Command,
 };
-
-pub fn init_log(project_path: &Path) -> (WorkerGuard, WorkerGuard) {
-    std::env::set_var("RUST_BACKTRACE", "1");
-    let time_zone_offset = UtcOffset::from_hms(8, 0, 0).expect("should get UTC+8 offset!");
-
-    let format = format_description::parse("[year][month][day]_[hour][minute][second]").unwrap();
-    let now = time::OffsetDateTime::now_local()
-        .unwrap_or(time::OffsetDateTime::now_utc().to_offset(time_zone_offset))
-        .format(&format)
-        .unwrap();
-    let log_file_name = format!("adblog_{}.log", now);
-    let exec_folder = project_path.to_str().unwrap();
-    println!(
-        "log file path: {}/{}",
-        exec_folder.replace("\\", "/"),
-        log_file_name
-    );
-    let log_file = tracing_appender::rolling::never(exec_folder, log_file_name);
-    let (non_blocking_file, _file_guard) = tracing_appender::non_blocking(log_file);
-    let (non_blocking_stdout, _stdout_guard) = tracing_appender::non_blocking(stdout());
-
-    let timer = OffsetTime::new(
-        time_zone_offset,
-        time::format_description::well_known::Rfc3339,
-    );
-
-    tracing::subscriber::set_global_default(
-        fmt::Subscriber::builder()
-            .without_time()
-            .with_writer(non_blocking_stdout)
-            .finish()
-            .with(
-                fmt::Layer::default()
-                    .with_timer(timer)
-                    .with_writer(non_blocking_file),
-            ),
-    )
-    .expect("Unable to set global tracing subscriber");
-
-    (_stdout_guard, _file_guard)
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn cyg_to_win(path: &str) -> String {
-    path.replace("/cygdrive/c", "C:")
-}
-
-#[cfg(not(target_os = "windows"))]
-pub(crate) fn cyg_to_win(path: &str) -> String {
-    path.to_string()
-}
-
-async fn run_cmd<S, I>(
-    work: &str,
-    program: S,
-    args: I,
-    require_output: bool,
-) -> Result<(std::process::ExitStatus, Vec<String>)>
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<OsStr>,
-{
-    let mut cmd = Command::new(program);
-
-    cmd.args(args);
-
-    // Specify that we want the command's standard output piped back to us.
-    // By default, standard input/output/error will be inherited from the
-    // current process (for example, this means that standard input will
-    // come from the keyboard and standard output/error will go directly to
-    // the terminal if this process is invoked from the command line).
-    cmd.stdout(Stdio::piped());
-
-    let mut child = cmd.spawn().expect("failed to spawn command");
-
-    let stdout = child
-        .stdout
-        .take()
-        .expect("child did not have a handle to stdout");
-
-    let mut reader = BufReader::new(stdout).lines();
-
-    let (tx, mut rx) = mpsc::channel(2);
-
-    // Ensure the child process is spawned in the runtime so it can
-    // make progress on its own while we await for any output.
-    tokio::spawn(async move {
-        let output = child
-            .wait_with_output()
-            .await
-            .expect("child process encountered an error");
-
-        tx.send(output.status).await.unwrap();
-    });
-
-    let mut stdout = Vec::new();
-    while let Some(line) = reader.next_line().await? {
-        tracing::info!("[{}] {}", work, line);
-        if require_output {
-            stdout.push(line);
-        }
-    }
-
-    let output_result = rx.recv().await;
-
-    if output_result.is_none() {
-        anyhow::bail!("run_cmd: output_result is none");
-    }
-
-    tracing::info!("{} finished code {}", work, output_result.as_ref().unwrap());
-    Ok((output_result.unwrap(), stdout))
-}
-
-pub(crate) fn extract_single_file(src_zip: &Path, sub_file: &str, des_file: &Path) -> Result<()> {
-    let file = std::fs::File::open(src_zip)?;
-    let mut archive = zip::ZipArchive::new(file)?;
-    let mut file = archive.by_name(sub_file)?;
-    if file.is_dir() {
-        anyhow::bail!("extract_single_file: {} is a directory", sub_file);
-    } else {
-        tracing::info!(
-            "File {} extracted to \"{}\" ({} bytes)",
-            sub_file,
-            des_file.display(),
-            file.size()
-        );
-        if let Some(p) = des_file.parent() {
-            if !p.exists() {
-                fs::create_dir_all(p)?;
-            }
-        }
-        let mut out_file = std::fs::File::create(des_file)?;
-        std::io::copy(&mut file, &mut out_file)?;
-    }
-
-    // Get and Set permissions
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        if let Some(mode) = file.unix_mode() {
-            fs::set_permissions(des_file, fs::Permissions::from_mode(mode))?;
-        }
-    }
-
-    Ok(())
-}
+use utils_lib::{assets_path, extract_single_file, init_log, resolve_cygpath, run_cmd};
 
 fn get_value_by_key(src: &str, prefix: &str, key: &str) -> String {
     let src = &src[prefix.len() + 1..];
@@ -274,28 +93,20 @@ struct Args {
 
 async fn run_adb_log() -> Result<()> {
     let args = Args::parse();
-    let file_path = cyg_to_win(&args.file_path);
+
+    let file_path = resolve_cygpath(&args.file_path).await?;
     let file_path = std::path::absolute(file_path)?;
     if !file_path.exists() {
         anyhow::bail!("adblog: file not exist!");
     }
 
     let folder = file_path.parent().context("working folder not found")?;
-    let _guards = init_log(folder);
+    let _guards = init_log("adblog", folder);
 
-    let script_folder = match std::env::var("RUST_SCRIPT_BASE_PATH") {
-        Ok(script_folder) => {
-            tracing::info!("RUST_SCRIPT_BASE_PATH exists {}", script_folder);
-            script_folder
-        }
-        Err(_) => {
-            tracing::info!("RUST_SCRIPT_BASE_PATH not exists, use CARGO_MANIFEST_DIR");
-            std::env::var("CARGO_MANIFEST_DIR")?
-        }
-    };
-    tracing::info!("script_folder: {}", script_folder);
-    let script_folder = std::path::absolute(&script_folder)?;
-    if !script_folder.is_dir() {
+    let assets_path = assets_path().await;
+    tracing::info!("script_folder: {}", assets_path);
+    let assets_path = std::path::absolute(assets_path)?;
+    if !assets_path.is_dir() {
         anyhow::bail!("script_folder not found");
     }
 
@@ -310,13 +121,13 @@ async fn run_adb_log() -> Result<()> {
         }
     };
     tracing::info!("android_home: {}", android_home);
-    let android_home = cyg_to_win(&android_home);
+    let android_home = resolve_cygpath(&android_home).await?;
     let android_home = std::path::absolute(&android_home)?;
     if !android_home.is_dir() {
         anyhow::bail!("android_home not found");
     }
 
-    let bundle_tool_path = script_folder.join("bundletool-all-1.16.0.jar");
+    let bundle_tool_path = assets_path.join("bundletool-all-1.16.0.jar");
     if !bundle_tool_path.exists() {
         anyhow::bail!("bundletool-all-1.16.0.jar not found");
     }
@@ -392,17 +203,6 @@ async fn run_adb_log() -> Result<()> {
     if !aapt2_path.is_file() {
         anyhow::bail!("aapt2 not found");
     }
-
-    // let refresh_devices = run_cmd(
-    //     "refresh devices",
-    //     adb_path.to_str().unwrap(),
-    //     ["kill-server"],
-    //     false,
-    // )
-    // .await?;
-    // if !refresh_devices.0.success() {
-    //     anyhow::bail!("adb kill-server failed");
-    // }
 
     let devices_str = run_cmd(
         "list devices",
