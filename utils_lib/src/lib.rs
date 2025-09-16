@@ -1,5 +1,4 @@
 use anyhow::Result;
-use std::ffi::OsStr;
 use std::fs;
 use std::io::stdout;
 use std::path::Path;
@@ -13,7 +12,7 @@ use tracing_subscriber::fmt::{self, time::OffsetTime};
 use tracing_subscriber::layer::SubscriberExt;
 
 pub fn init_log(prefix: &str, project_path: &Path) -> (WorkerGuard, WorkerGuard) {
-    std::env::set_var("RUST_BACKTRACE", "1");
+    // std::env::set_var("RUST_BACKTRACE", "1");
     let time_zone_offset = UtcOffset::from_hms(8, 0, 0).expect("should get UTC+8 offset!");
 
     let format = format_description::parse("[year][month][day]_[hour][minute][second]").unwrap();
@@ -57,7 +56,7 @@ async fn has_cygpath() -> &'static bool {
     static HAS_CYGPATH: OnceCell<bool> = OnceCell::const_new();
     HAS_CYGPATH
         .get_or_init(async || {
-            let output = run_cmd("cygpath_check", "command", ["-v", "cygpath"], false).await;
+            let output = run_cmd("cygpath_check", "which", &["cygpath"], false).await;
             match output {
                 Err(_) => false,
                 Ok(o) => o.0.success(),
@@ -70,7 +69,7 @@ pub async fn resolve_cygpath(path: &str) -> Result<String> {
     if !*has_cygpath().await {
         return Ok(path.to_string());
     }
-    let result = run_cmd("cygpath-convert", "cygpath", ["-w", path], true).await?;
+    let result = run_cmd("cygpath-convert", "cygpath", &["-wa", path], true).await?;
     Ok(result.1.join("").trim().to_string())
 }
 
@@ -101,16 +100,14 @@ pub async fn assets_path() -> &'static str {
         .await
 }
 
-pub async fn run_cmd<S, I>(
+pub async fn run_cmd(
     work: &str,
-    program: S,
-    args: I,
+    program: &str,
+    args: &[&str],
     require_output: bool,
-) -> Result<(std::process::ExitStatus, Vec<String>)>
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<OsStr>,
-{
+) -> Result<(std::process::ExitStatus, Vec<String>)> {
+    tracing::info!("{} start: {} {}", work, program, args.join(" "));
+
     let mut cmd = Command::new(program);
 
     cmd.args(args);

@@ -32,7 +32,7 @@ async fn adb_get_pid(adb_path: &Path, selected_device: &str, package_name: &str)
         let query_ps = run_cmd(
             "query ps",
             adb_path.to_str().unwrap(),
-            [
+            &[
                 "-s",
                 selected_device,
                 "shell",
@@ -207,7 +207,7 @@ async fn run_adb_log() -> Result<()> {
     let devices_str = run_cmd(
         "list devices",
         adb_path.to_str().unwrap(),
-        ["devices"],
+        &["devices"],
         true,
     )
     .await?;
@@ -263,7 +263,7 @@ async fn run_adb_log() -> Result<()> {
         let aab_to_apks = run_cmd(
             "aab to apks",
             "java",
-            [
+            &[
                 "-jar",
                 "bundletool-all-1.16.0.jar",
                 "build-apks",
@@ -305,7 +305,7 @@ async fn run_adb_log() -> Result<()> {
     let aapt_dump = run_cmd(
         "get package and activity",
         aapt2_path.to_str().unwrap(),
-        ["dump", "badging", apk_to_read.to_str().unwrap()],
+        &["dump", "badging", apk_to_read.to_str().unwrap()],
         true,
     )
     .await?;
@@ -343,7 +343,7 @@ async fn run_adb_log() -> Result<()> {
         let get_installed = run_cmd(
             "get installed",
             adb_path.to_str().unwrap(),
-            ["-s", &selected_device, "shell", "pm", "list", "packages"],
+            &["-s", &selected_device, "shell", "pm", "list", "packages"],
             true,
         )
         .await?;
@@ -359,7 +359,7 @@ async fn run_adb_log() -> Result<()> {
             let uninstall = run_cmd(
                 "uninstall",
                 adb_path.to_str().unwrap(),
-                ["-s", &selected_device, "uninstall", &package_name],
+                &["-s", &selected_device, "uninstall", &package_name],
                 false,
             )
             .await?;
@@ -374,7 +374,7 @@ async fn run_adb_log() -> Result<()> {
         run_cmd(
             "install apks",
             "java",
-            [
+            &[
                 "-jar",
                 "bundletool-all-1.16.0.jar",
                 "install-apks",
@@ -389,7 +389,7 @@ async fn run_adb_log() -> Result<()> {
         run_cmd(
             "install apk",
             adb_path.to_str().unwrap(),
-            [
+            &[
                 "-s",
                 &selected_device,
                 "install",
@@ -408,7 +408,7 @@ async fn run_adb_log() -> Result<()> {
     let start = run_cmd(
         "start process",
         adb_path.to_str().unwrap(),
-        [
+        &[
             "-s",
             &selected_device,
             "shell",
@@ -489,7 +489,7 @@ async fn run_adb_log() -> Result<()> {
                 let dumpsys_meminfo = run_cmd(
                     "dumpsys meminfo",
                     adb_path.to_str().unwrap(),
-                    [
+                    &[
                         "-s",
                         &selected_device,
                         "shell",
@@ -512,7 +512,7 @@ async fn run_adb_log() -> Result<()> {
                 let dumpsys_cpuinfo = run_cmd(
                     "dumpsys cpuinfo",
                     adb_path.to_str().unwrap(),
-                    [
+                    &[
                         "-s",
                         &selected_device,
                         "shell",

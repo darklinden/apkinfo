@@ -124,7 +124,7 @@ async fn run_apk_info() -> Result<()> {
     let info_out = run_cmd(
         "aapt2",
         aapt2_path.to_str().unwrap(),
-        ["dump", "badging", apk_path.to_str().unwrap()],
+        &["dump", "badging", apk_path.to_str().unwrap()],
         false,
     )
     .await?;
@@ -136,7 +136,7 @@ async fn run_apk_info() -> Result<()> {
     let apk_results = run_cmd(
         "apksigner",
         "java",
-        [
+        &[
             "-jar",
             apksigner_path.to_str().unwrap(),
             "verify",
@@ -154,7 +154,7 @@ async fn run_apk_info() -> Result<()> {
     let channel = run_cmd(
         "vasdolly",
         "java",
-        [
+        &[
             "-jar",
             vasdolly_path.to_str().unwrap(),
             "get",

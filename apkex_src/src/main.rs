@@ -16,7 +16,7 @@ async fn unpack(apktool_path: &str, src_name: &Path) -> Result<String> {
     let output = run_cmd(
         "unpack",
         "java",
-        [
+        &[
             "-jar",
             "-Xms512m",
             "-Xmx1024m",
@@ -49,7 +49,7 @@ async fn pack(apktool_path: &str, src_path: &Path) -> Result<String> {
     let output = run_cmd(
         "pack",
         "java",
-        [
+        &[
             "-jar",
             "-Xms512m",
             "-Xmx1024m",
@@ -94,7 +94,7 @@ async fn sign(apksigner_path: &str, apk_path: &str, conf: &KeyConfig) -> Result<
     let output = run_cmd(
         "sign",
         "java",
-        [
+        &[
             "-jar",
             apksigner_path,
             "--allowResign",
